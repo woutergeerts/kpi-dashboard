@@ -1,0 +1,24 @@
+# Secrets — never commit
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# macOS
+.DS_Store
+
+# Large / generated files
+analyst_photo.jpg
+*.xlsx
+
+# Streamlit cache
+.streamlit/
