@@ -21,6 +21,7 @@ from queries_rooms import (
     load_hotelclass_annual, load_hotelclass_monthly,
     count_properties, MIN_PROPERTIES,
     HOTEL_CLASS_ORDER, REGION_ORDER,
+    COUNTRY_CURRENCY, load_fx_rate,
 )
 
 st.set_page_config(page_title="Hotel Performance Report", page_icon="🏨", layout="wide")
@@ -35,7 +36,15 @@ RICH_BLACK = "#262626"
 PALETTE    = [PINK, ORANGE, YELLOW, BLUE, MAUVE, WARM_GREY]
 GLOBAL_COLOR = RICH_BLACK
 
+curr_sym = "€"
+fx_rate  = 1.0
+
 TOO_FEW_MSG = f"⚠️ Fewer than {MIN_PROPERTIES} properties match these filters. Data suppressed to protect confidentiality."
+
+
+def mc(v: float) -> str:
+    """Format a EUR monetary value in the active display currency."""
+    return f"{curr_sym}{v * fx_rate:,.2f}"
 
 st.title("🏨 Hotel Performance Report")
 
@@ -58,6 +67,15 @@ with st.sidebar:
     end_date   = col2.date_input("End date",   value=pd.Timestamp.today().normalize())
     st.divider()
     st.caption("Data is cached for 1 hour.")
+
+    if len(selected_country) == 1:
+        _cinfo = COUNTRY_CURRENCY.get(selected_country[0])
+        if _cinfo and _cinfo[0] != "EUR":
+            _curr_code, _curr_sym_local = _cinfo
+            st.divider()
+            if st.toggle(f"Local currency ({_curr_code})", value=False):
+                curr_sym = _curr_sym_local
+                fx_rate  = load_fx_rate(_curr_code)
 
 filters = {
     "region":   selected_region,
@@ -97,9 +115,9 @@ def render_annual_tiles(df_ann: pd.DataFrame, dim_col: str, selected_items: list
         return
     show_items = ["Global"] + selected_items
     for metric, label, fmt in [
-        ("occupancy", "Occupancy (%)",  lambda v: f"{v:.1f}%"),
-        ("adr",       "Avg ADR (€)",    lambda v: f"€{v:,.2f}"),
-        ("revpar",    "Avg RevPAR (€)", lambda v: f"€{v:,.2f}"),
+        ("occupancy", "Occupancy (%)",           lambda v: f"{v:.1f}%"),
+        ("adr",       f"Avg ADR ({curr_sym})",    mc),
+        ("revpar",    f"Avg RevPAR ({curr_sym})", mc),
     ]:
         st.markdown(f"**{label}**")
         hcols = st.columns([2, 1, 1, 1])
@@ -142,8 +160,8 @@ def render_monthly_lines(df_mon: pd.DataFrame, dim_col: str, selected_items: lis
     col_r1, col_r2, col_r3 = st.columns(3)
     for col, metric, label in [
         (col_r1, "occupancy", "Occupancy (%)"),
-        (col_r2, "adr",       "ADR (€)"),
-        (col_r3, "revpar",    "RevPAR (€)"),
+        (col_r2, "adr",       f"ADR ({curr_sym})"),
+        (col_r3, "revpar",    f"RevPAR ({curr_sym})"),
     ]:
         with col:
             fig = px.line(df_plot, x="month", y=metric, color=dim_col,
@@ -207,9 +225,9 @@ with tab2:
             kpis = load_kpis(filters)
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Enterprises",        f"{kpis.get('enterprises', 0):,}")
-        c2.metric("ADR (€)",            f"€{kpis.get('adr', 0):,.2f}")
+        c2.metric(f"ADR ({curr_sym})",   mc(kpis.get('adr', 0)))
         c3.metric("Occupancy",          f"{kpis.get('occupancy', 0):.1f}%")
-        c4.metric("RevPAR (€)",         f"€{kpis.get('revpar', 0):,.2f}")
+        c4.metric(f"RevPAR ({curr_sym})", mc(kpis.get('revpar', 0)))
         c5.metric("Total Reservations", f"{kpis.get('reservations', 0):,}")
 
         st.markdown(f"**YTD Growth — 2026 vs 2025 (Jan 1 – {date.today().strftime('%b %d')})**")
@@ -222,10 +240,10 @@ with tab2:
             g1, g2, g3 = st.columns(3)
             g1.metric("Occupancy 2026 YTD", f"{ytd['occ_2026']:.1f}%",
                       f"{ytd['occ_chg']:+.1f}% vs 2025 ({ytd['occ_2025']:.1f}%)")
-            g2.metric("ADR 2026 YTD", f"€{ytd['adr_2026']:,.2f}",
-                      f"{ytd['adr_chg']:+.1f}% vs 2025 (€{ytd['adr_2025']:,.2f})")
-            g3.metric("RevPAR 2026 YTD", f"€{ytd['revpar_2026']:,.2f}",
-                      f"{ytd['revpar_chg']:+.1f}% vs 2025 (€{ytd['revpar_2025']:,.2f})")
+            g2.metric(f"ADR 2026 YTD", mc(ytd['adr_2026']),
+                      f"{ytd['adr_chg']:+.1f}% vs 2025 ({mc(ytd['adr_2025'])})")
+            g3.metric(f"RevPAR 2026 YTD", mc(ytd['revpar_2026']),
+                      f"{ytd['revpar_chg']:+.1f}% vs 2025 ({mc(ytd['revpar_2025'])})")
         else:
             st.info("YTD growth data not available.")
 
@@ -240,8 +258,8 @@ with tab2:
             col_t1, col_t2, col_t3 = st.columns(3)
             for col, metric, label in [
                 (col_t1, "occupancy", "Occupancy (%)"),
-                (col_t2, "adr",       "ADR (€)"),
-                (col_t3, "revpar",    "RevPAR (€)"),
+                (col_t2, "adr",       f"ADR ({curr_sym})"),
+                (col_t3, "revpar",    f"RevPAR ({curr_sym})"),
             ]:
                 with col:
                     fig = px.line(df_trends, x="day_of_year", y=metric, color="year",
@@ -270,8 +288,8 @@ with tab2:
             col_o1, col_o2, col_o3 = st.columns(3)
             for col, metric, label in [
                 (col_o1, "occupancy", "Occupancy (%)"),
-                (col_o2, "adr",       "ADR (€)"),
-                (col_o3, "revpar",    "RevPAR (€)"),
+                (col_o2, "adr",       f"ADR ({curr_sym})"),
+                (col_o3, "revpar",    f"RevPAR ({curr_sym})"),
             ]:
                 with col:
                     fig = px.line(df_otb, x="days_ahead", y=metric, color="year_label",
@@ -298,10 +316,10 @@ with tab2:
             o1, o2, o3 = st.columns(3)
             o1.metric("OTB Occupancy 2026", f"{otb_g['occ_ty']:.1f}%",
                       f"{otb_g['occ_chg']:+.1f}% vs 2025 ({otb_g['occ_ly']:.1f}%)")
-            o2.metric("OTB ADR 2026", f"€{otb_g['adr_ty']:,.2f}",
-                      f"{otb_g['adr_chg']:+.1f}% vs 2025 (€{otb_g['adr_ly']:,.2f})")
-            o3.metric("OTB RevPAR 2026", f"€{otb_g['revpar_ty']:,.2f}",
-                      f"{otb_g['revpar_chg']:+.1f}% vs 2025 (€{otb_g['revpar_ly']:,.2f})")
+            o2.metric("OTB ADR 2026", mc(otb_g['adr_ty']),
+                      f"{otb_g['adr_chg']:+.1f}% vs 2025 ({mc(otb_g['adr_ly'])})")
+            o3.metric("OTB RevPAR 2026", mc(otb_g['revpar_ty']),
+                      f"{otb_g['revpar_chg']:+.1f}% vs 2025 ({mc(otb_g['revpar_ly'])})")
         else:
             st.info("OTB growth data not available.")
 
@@ -683,9 +701,9 @@ with tab6:
 
     # ── ADR ───────────────────────────────────────────────────────────────────
     with st.container(border=True):
-        st.markdown("#### Average Daily Rate (€)")
+        st.markdown(f"#### Average Daily Rate ({curr_sym})")
         st.caption("Room revenue per occupied room-night, attributed to the booking channel.")
-        _channel_grid(df_ch_adr, "adr_eur", lambda v: f"€{v:,.2f}")
+        _channel_grid(df_ch_adr, "adr_eur", mc)
         if not df_ch_adr.empty:
             excel_download_btn(
                 df_ch_adr[["year","channel","room_nights","adr_eur"]],
@@ -772,8 +790,8 @@ with tab7:
             df_tbl["% of Total"] = (df_tbl["net_revenue_eur"] / total_all * 100).apply(
                 lambda x: f"{x:.1f}%")
             df_tbl["net_revenue_eur"] = df_tbl["net_revenue_eur"].apply(
-                lambda x: f"€{x:,.0f}")
-            df_tbl.columns = ["Department","Net Revenue (€)","% of Total"]
+                lambda x: f"{curr_sym}{x * fx_rate:,.0f}")
+            df_tbl.columns = ["Department", f"Net Revenue ({curr_sym})", "% of Total"]
             st.dataframe(df_tbl, use_container_width=True, hide_index=True)
     else:
         st.info("No revenue data for selected filters." if n_props >= MIN_PROPERTIES
@@ -786,16 +804,17 @@ with tab7:
     if not df_sqm.empty:
         col_sqm1, col_sqm2 = st.columns(2)
         with col_sqm1:
-            st.markdown("**Avg Revenue per m² (€)**")
-            fig = px.bar(df_sqm.sort_values("revenue_per_sqm_eur"),
-                         x="revenue_per_sqm_eur", y="category", orientation="h",
-                         labels={"category":"","revenue_per_sqm_eur":"€ per m²"},
+            st.markdown(f"**Avg Revenue per m² ({curr_sym})**")
+            _sqm_plot = df_sqm.sort_values("revenue_per_sqm_eur").copy()
+            _sqm_plot["_converted"] = _sqm_plot["revenue_per_sqm_eur"] * fx_rate
+            fig = px.bar(_sqm_plot,
+                         x="_converted", y="category", orientation="h",
+                         labels={"category":"","_converted":f"{curr_sym} per m²"},
                          color="category",
                          color_discrete_map=dict(zip(
                              ["Rooms","Food & Beverage","Events & Meetings",
                               "Wellness & Spa","Sport & Recreation"], PALETTE)),
-                         text=df_sqm.sort_values("revenue_per_sqm_eur")["revenue_per_sqm_eur"]
-                             .apply(lambda x: f"€{x:.2f}"))
+                         text=_sqm_plot["_converted"].apply(lambda x: f"{curr_sym}{x:,.2f}"))
             fig.update_traces(textposition="outside")
             fig.update_layout(showlegend=False, yaxis={"categoryorder":"total ascending"})
             st.plotly_chart(fig, use_container_width=True)
@@ -803,9 +822,8 @@ with tab7:
         with col_sqm2:
             st.markdown("**Properties with sq m data**")
             df_sqm_tbl = df_sqm[["category","property_count","revenue_per_sqm_eur"]].copy()
-            df_sqm_tbl["revenue_per_sqm_eur"] = df_sqm_tbl["revenue_per_sqm_eur"].apply(
-                lambda x: f"€{x:.2f}")
-            df_sqm_tbl.columns = ["Department","Properties","€ per m²"]
+            df_sqm_tbl["revenue_per_sqm_eur"] = df_sqm_tbl["revenue_per_sqm_eur"].apply(mc)
+            df_sqm_tbl.columns = ["Department", "Properties", f"{curr_sym} per m²"]
             st.dataframe(df_sqm_tbl, use_container_width=True, hide_index=True)
             st.caption("ℹ️ Accuracy grade ≥ 3 only.")
     else:
@@ -897,14 +915,16 @@ with tab7:
         else:
             st.info("No data." if n_props >= MIN_PROPERTIES else TOO_FEW_MSG)
     with col_u2:
-        st.markdown("**Avg Upsell Value per Reservation by Channel (€)**")
+        st.markdown(f"**Avg Upsell Value per Reservation by Channel ({curr_sym})**")
         with st.spinner("Loading…"):
             df_uval = load_upsell_avg_value_by_channel(filters)
         if not df_uval.empty:
-            fig = px.bar(df_uval, x="channel", y="avg_value",
-                         labels={"channel":"","avg_value":"Avg Value (€)"},
+            _uval_plot = df_uval.copy()
+            _uval_plot["avg_value"] = _uval_plot["avg_value"] * fx_rate
+            fig = px.bar(_uval_plot, x="channel", y="avg_value",
+                         labels={"channel":"", "avg_value": f"Avg Value ({curr_sym})"},
                          color_discrete_sequence=[ORANGE],
-                         text=df_uval["avg_value"].apply(lambda x: f"€{x:.2f}"))
+                         text=_uval_plot["avg_value"].apply(lambda x: f"{curr_sym}{x:,.2f}"))
             fig.update_traces(textposition="outside")
             st.plotly_chart(fig, use_container_width=True)
             excel_download_btn(df_uval, "upsell_avg_value.xlsx")
@@ -927,10 +947,12 @@ with tab7:
             fig.update_xaxes(ticksuffix="%")
             st.plotly_chart(fig, use_container_width=True)
         with col_u4:
-            fig = px.bar(df_ucat, x="avg_value_eur", y="category", orientation="h",
-                         labels={"category":"","avg_value_eur":"Avg Value per Upsell (€)"},
+            _ucat_plot = df_ucat.copy()
+            _ucat_plot["avg_value_eur"] = _ucat_plot["avg_value_eur"] * fx_rate
+            fig = px.bar(_ucat_plot, x="avg_value_eur", y="category", orientation="h",
+                         labels={"category":"", "avg_value_eur": f"Avg Value per Upsell ({curr_sym})"},
                          color_discrete_sequence=[MAUVE],
-                         text=df_ucat["avg_value_eur"].apply(lambda x: f"€{x:.2f}"))
+                         text=_ucat_plot["avg_value_eur"].apply(lambda x: f"{curr_sym}{x:,.2f}"))
             fig.update_traces(textposition="outside")
             fig.update_layout(yaxis={"categoryorder":"total ascending"})
             st.plotly_chart(fig, use_container_width=True)

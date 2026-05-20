@@ -152,7 +152,7 @@ def _region_country_clause(region: tuple, country: tuple) -> str:
 def prop_filter(f: dict) -> str:
     parts = [
         "p.is_deleted = FALSE",
-        "p.customer_status = 'Subscribed'",
+        "p.subscription_state = 'Enabled'",
         f"CAST(p.pms_property_created_at AS DATE) < '{f['start']}'",
         _go_live_clause(f['start']),
     ]
@@ -199,7 +199,7 @@ def get_countries() -> list:
         WHERE country_name IS NOT NULL
           AND country_name != ''
           AND is_deleted = FALSE
-          AND customer_status = 'Subscribed'
+          AND subscription_state = 'Enabled'
         ORDER BY country_name
     """)
     return df["country_name"].tolist()
@@ -264,7 +264,7 @@ def load_ytd_growth(region: tuple, country: tuple, segment: tuple,
                     cohort_start: str = "2024-01-01") -> dict:
     extra = _region_country_clause(region, country)
     parts = [
-        "p.is_deleted = FALSE", "p.customer_status = 'Subscribed'",
+        "p.is_deleted = FALSE", "p.subscription_state = 'Enabled'",
         f"CAST(p.pms_property_created_at AS DATE) < '{cohort_start}'",
         _go_live_clause(cohort_start),
     ]
@@ -311,7 +311,7 @@ def load_otb_growth(region: tuple, country: tuple, segment: tuple,
                     cohort_start: str = "2024-01-01") -> dict:
     extra = _region_country_clause(region, country)
     parts = [
-        "p.is_deleted = FALSE", "p.customer_status = 'Subscribed'",
+        "p.is_deleted = FALSE", "p.subscription_state = 'Enabled'",
         f"CAST(p.pms_property_created_at AS DATE) < '{cohort_start}'",
         _go_live_clause(cohort_start),
     ]
@@ -439,7 +439,7 @@ def _mrt_res_filter(f: dict) -> str:
     """WHERE clause for mrt_reservations_and_guests + dim_pms_properties join."""
     parts = [
         "p.is_deleted = FALSE",
-        "p.customer_status = 'Subscribed'",
+        "p.subscription_state = 'Enabled'",
         f"CAST(p.pms_property_created_at AS DATE) < '{f['start']}'",
         _go_live_clause(f['start']),
         "r.reservation_state != 'Canceled'",
@@ -564,8 +564,8 @@ def load_payment_type(f: dict) -> pd.DataFrame:
           ON t.transaction_details_id = td.transaction_details_id
         JOIN product.dimensions.dim_pms_properties p ON t.enterprise_id = p.pms_property_id
         WHERE {pf} AND t.transaction_state = 'Charged'
-          AND CAST(t.created_at_utc AS DATE) >= '{f['start']}'
-          AND CAST(t.created_at_utc AS DATE) < '{f['end']}'
+          AND CAST(t.created_at AS DATE) >= '{f['start']}'
+          AND CAST(t.created_at AS DATE) < '{f['end']}'
           AND td.detailed_transaction_type IS NOT NULL
         GROUP BY td.detailed_transaction_type ORDER BY transactions DESC
     """)
@@ -602,8 +602,8 @@ def load_card_network(f: dict) -> pd.DataFrame:
           ON t.card_details_id = cd.card_details_id
         JOIN product.dimensions.dim_pms_properties p ON t.enterprise_id = p.pms_property_id
         WHERE {pf} AND t.transaction_state = 'Charged' AND t.is_card_transaction = TRUE
-          AND CAST(t.created_at_utc AS DATE) >= '{f['start']}'
-          AND CAST(t.created_at_utc AS DATE) < '{f['end']}'
+          AND CAST(t.created_at AS DATE) >= '{f['start']}'
+          AND CAST(t.created_at AS DATE) < '{f['end']}'
         GROUP BY card_network ORDER BY transactions DESC
     """)
 
@@ -874,7 +874,7 @@ def _canc_base_filter(f: dict) -> str:
         tuple(f.get("region") or []),
         tuple(f.get("country") or []),
     )
-    pf = "p.is_deleted = FALSE AND p.customer_status = 'Subscribed'"
+    pf = "p.is_deleted = FALSE AND p.subscription_state = 'Enabled'"
     if extra:
         pf += " " + extra
     if f.get("segment"):
@@ -934,7 +934,7 @@ def load_channel_adr(f: dict) -> pd.DataFrame:
         tuple(f.get("country") or []),
     )
     parts = [
-        "p.is_deleted = FALSE", "p.customer_status = 'Subscribed'",
+        "p.is_deleted = FALSE", "p.subscription_state = 'Enabled'",
         _go_live_clause(f["start"]),
         f"CAST(p.pms_property_created_at AS DATE) < '{f['start']}'",
     ]
@@ -1001,7 +1001,7 @@ def load_channel_behaviour(f: dict) -> pd.DataFrame:
         tuple(f.get("region") or []),
         tuple(f.get("country") or []),
     )
-    parts = ["p.is_deleted = FALSE", "p.customer_status = 'Subscribed'"]
+    parts = ["p.is_deleted = FALSE", "p.subscription_state = 'Enabled'"]
     if extra:
         parts.append(extra.lstrip("AND "))
     if f.get("segment"):
@@ -1111,7 +1111,7 @@ def load_cancellation_by_channel(f: dict) -> pd.DataFrame:
 @st.cache_data(ttl=3600)
 def load_behaviour_annual(region: tuple, country: tuple, segment: tuple) -> dict:
     extra = _region_country_clause(region, country)
-    parts = ["p.is_deleted = FALSE", "p.customer_status = 'Subscribed'"]
+    parts = ["p.is_deleted = FALSE", "p.subscription_state = 'Enabled'"]
     if extra:
         parts.append(extra.lstrip("AND "))
     if segment:
@@ -1205,7 +1205,7 @@ def load_regional_annual(segment: tuple, region: tuple, country: tuple) -> pd.Da
                {ROOM_METRICS_SQL}
         FROM product.marts.mrt_daily_resource_and_revenue_metrics_per_property m
         JOIN product.dimensions.dim_pms_properties p ON m.pms_property_id = p.pms_property_id
-        WHERE p.is_deleted=FALSE AND p.customer_status='Subscribed'
+        WHERE p.is_deleted=FALSE AND p.subscription_state='Enabled'
           AND YEAR(m.calendar_date_local) IN (2024,2025,2026)
           AND CAST(p.pms_property_created_at AS DATE) < '2024-01-01'
           AND {go_live}
@@ -1220,7 +1220,7 @@ def load_regional_annual(segment: tuple, region: tuple, country: tuple) -> pd.Da
                {ROOM_METRICS_SQL}
         FROM product.marts.mrt_daily_resource_and_revenue_metrics_per_property m
         JOIN product.dimensions.dim_pms_properties p ON m.pms_property_id = p.pms_property_id
-        WHERE p.is_deleted=FALSE AND p.customer_status='Subscribed'
+        WHERE p.is_deleted=FALSE AND p.subscription_state='Enabled'
           AND YEAR(m.calendar_date_local) IN (2024,2025,2026)
           AND CAST(p.pms_property_created_at AS DATE) < '2024-01-01'
           AND {go_live}
@@ -1242,12 +1242,12 @@ def load_regional_monthly(segment: tuple, start: str, end: str,
     extra = _region_country_clause(region, country)
     rc = REGION_CASE
     go_live = _go_live_clause(start)
-    base = (f"p.is_deleted=FALSE AND p.customer_status='Subscribed' "
+    base = (f"p.is_deleted=FALSE AND p.subscription_state='Enabled' "
             f"AND CAST(p.pms_property_created_at AS DATE)<'{start}' "
             f"AND {go_live} "
             f"AND m.calendar_date_local>='{start}' AND m.calendar_date_local<'{end}' "
             f"{seg_clause} {extra}")
-    global_base = (f"p.is_deleted=FALSE AND p.customer_status='Subscribed' "
+    global_base = (f"p.is_deleted=FALSE AND p.subscription_state='Enabled' "
                    f"AND CAST(p.pms_property_created_at AS DATE)<'{start}' "
                    f"AND {go_live} "
                    f"AND m.calendar_date_local>='{start}' AND m.calendar_date_local<'{end}' "
@@ -1300,7 +1300,7 @@ def load_country_annual(segment: tuple, country: tuple) -> pd.DataFrame:
                {ROOM_METRICS_SQL}
         FROM product.marts.mrt_daily_resource_and_revenue_metrics_per_property m
         JOIN product.dimensions.dim_pms_properties p ON m.pms_property_id = p.pms_property_id
-        WHERE p.is_deleted=FALSE AND p.customer_status='Subscribed'
+        WHERE p.is_deleted=FALSE AND p.subscription_state='Enabled'
           AND YEAR(m.calendar_date_local) IN (2024,2025,2026)
           AND CAST(p.pms_property_created_at AS DATE) < '2024-01-01'
           AND {go_live}
@@ -1315,7 +1315,7 @@ def load_country_annual(segment: tuple, country: tuple) -> pd.DataFrame:
                {ROOM_METRICS_SQL}
         FROM product.marts.mrt_daily_resource_and_revenue_metrics_per_property m
         JOIN product.dimensions.dim_pms_properties p ON m.pms_property_id = p.pms_property_id
-        WHERE p.is_deleted=FALSE AND p.customer_status='Subscribed'
+        WHERE p.is_deleted=FALSE AND p.subscription_state='Enabled'
           AND YEAR(m.calendar_date_local) IN (2024,2025,2026)
           AND CAST(p.pms_property_created_at AS DATE) < '2024-01-01'
           AND {go_live}
@@ -1342,7 +1342,7 @@ def load_country_monthly(segment: tuple, start: str, end: str,
     else:
         country_clause = ""
 
-    base = (f"p.is_deleted=FALSE AND p.customer_status='Subscribed' "
+    base = (f"p.is_deleted=FALSE AND p.subscription_state='Enabled' "
             f"AND CAST(p.pms_property_created_at AS DATE)<'{start}' "
             f"AND {go_live} "
             f"AND m.calendar_date_local>='{start}' AND m.calendar_date_local<'{end}' "
@@ -1398,7 +1398,7 @@ def load_hotelclass_annual(segment: tuple, region: tuple = (),
                {ROOM_METRICS_SQL}
         FROM product.marts.mrt_daily_resource_and_revenue_metrics_per_property m
         JOIN product.dimensions.dim_pms_properties p ON m.pms_property_id = p.pms_property_id
-        WHERE p.is_deleted=FALSE AND p.customer_status='Subscribed'
+        WHERE p.is_deleted=FALSE AND p.subscription_state='Enabled'
           AND p.{HOTEL_CLASS_COL} IS NOT NULL
           AND YEAR(m.calendar_date_local) IN (2024,2025,2026)
           AND CAST(p.pms_property_created_at AS DATE) < '2024-01-01'
@@ -1414,7 +1414,7 @@ def load_hotelclass_annual(segment: tuple, region: tuple = (),
                {ROOM_METRICS_SQL}
         FROM product.marts.mrt_daily_resource_and_revenue_metrics_per_property m
         JOIN product.dimensions.dim_pms_properties p ON m.pms_property_id = p.pms_property_id
-        WHERE p.is_deleted=FALSE AND p.customer_status='Subscribed'
+        WHERE p.is_deleted=FALSE AND p.subscription_state='Enabled'
           AND YEAR(m.calendar_date_local) IN (2024,2025,2026)
           AND CAST(p.pms_property_created_at AS DATE) < '2024-01-01'
           AND {go_live}
@@ -1435,12 +1435,12 @@ def load_hotelclass_monthly(segment: tuple, start: str, end: str,
                   if segment else "")
     extra = _region_country_clause(region, country)
     go_live = _go_live_clause(start)
-    base = (f"p.is_deleted=FALSE AND p.customer_status='Subscribed' "
+    base = (f"p.is_deleted=FALSE AND p.subscription_state='Enabled' "
             f"AND CAST(p.pms_property_created_at AS DATE)<'{start}' "
             f"AND {go_live} "
             f"AND m.calendar_date_local>='{start}' AND m.calendar_date_local<'{end}' "
             f"AND p.{HOTEL_CLASS_COL} IS NOT NULL {seg_clause} {extra}")
-    global_base = (f"p.is_deleted=FALSE AND p.customer_status='Subscribed' "
+    global_base = (f"p.is_deleted=FALSE AND p.subscription_state='Enabled' "
                    f"AND CAST(p.pms_property_created_at AS DATE)<'{start}' "
                    f"AND {go_live} "
                    f"AND m.calendar_date_local>='{start}' AND m.calendar_date_local<'{end}' "
@@ -1470,3 +1470,69 @@ def load_hotelclass_monthly(segment: tuple, start: str, end: str,
     combined = pd.concat([global_df, df], ignore_index=True)
     combined["month"] = pd.to_datetime(combined["month"])
     return combined.sort_values(["hotel_class", "month"])
+
+
+# ── Country → currency mapping (non-EUR only) ─────────────────────────────────
+# Values: (ISO currency code, display symbol/prefix)
+COUNTRY_CURRENCY: dict[str, tuple[str, str]] = {
+    "United States":                        ("USD", "$"),
+    "Canada":                               ("CAD", "CA$"),
+    "United Kingdom":                       ("GBP", "£"),
+    "Jersey":                               ("GBP", "£"),
+    "Switzerland":                          ("CHF", "CHF "),
+    "Sweden":                               ("SEK", "kr "),
+    "Norway":                               ("NOK", "kr "),
+    "Denmark":                              ("DKK", "kr "),
+    "Iceland":                              ("ISK", "kr "),
+    "Czech Republic":                       ("CZK", "Kč "),
+    "Hungary":                              ("HUF", "Ft "),
+    "Poland":                               ("PLN", "zł "),
+    "Ukraine":                              ("UAH", "₴"),
+    "Russian Federation":                   ("RUB", "₽"),
+    "Faroe Islands":                        ("DKK", "kr "),
+    "Australia":                            ("AUD", "A$"),
+    "New Zealand":                          ("NZD", "NZ$"),
+    "Japan":                                ("JPY", "¥"),
+    "Thailand":                             ("THB", "฿"),
+    "Indonesia":                            ("IDR", "Rp "),
+    "Philippines":                          ("PHP", "₱"),
+    "Singapore":                            ("SGD", "S$"),
+    "Malaysia":                             ("MYR", "RM "),
+    "Hong Kong":                            ("HKD", "HK$"),
+    "Cambodia":                             ("KHR", "KHR "),
+    "Korea, Republic of":                   ("KRW", "₩"),
+    "Chinese Taipei":                       ("TWD", "NT$"),
+    "South Africa":                         ("ZAR", "R "),
+    "Turkey":                               ("TRY", "₺"),
+    "Israel":                               ("ILS", "₪"),
+    "Morocco":                              ("MAD", "MAD "),
+    "Georgia":                              ("GEL", "₾"),
+    "Egypt":                                ("EGP", "E£"),
+    "Kenya":                                ("KES", "KSh "),
+    "Nigeria":                              ("NGN", "₦"),
+    "Brazil":                               ("BRL", "R$"),
+    "Mexico":                               ("MXN", "MX$"),
+    "Colombia":                             ("COP", "COP "),
+    "Costa Rica":                           ("CRC", "₡"),
+    "Peru":                                 ("PEN", "S/ "),
+    "Chile":                                ("CLP", "CLP "),
+    "Argentina":                            ("ARS", "AR$"),
+    "Dominican Republic":                   ("DOP", "RD$"),
+}
+
+
+@st.cache_data(ttl=3600)
+def load_fx_rate(currency_code: str) -> float:
+    """Returns units of currency_code per 1 EUR (multiply EUR value to get local)."""
+    if currency_code == "EUR":
+        return 1.0
+    df = query(f"""
+        SELECT exchange_rate_value
+        FROM product.facts.fct_exchange_rates
+        WHERE source_currency_code = '{currency_code}'
+          AND valid_to = '9999-12-31'
+        LIMIT 1
+    """)
+    if df.empty or pd.isna(df["exchange_rate_value"].iloc[0]):
+        return 1.0
+    return float(df["exchange_rate_value"].iloc[0])
