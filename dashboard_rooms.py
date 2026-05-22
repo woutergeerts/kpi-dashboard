@@ -38,13 +38,14 @@ GLOBAL_COLOR = RICH_BLACK
 
 curr_sym = "€"
 fx_rate  = 1.0
+local_db = False
 
 TOO_FEW_MSG = f"⚠️ Fewer than {MIN_PROPERTIES} properties match these filters. Data suppressed to protect confidentiality."
 
 
 def mc(v: float) -> str:
-    """Format a EUR monetary value in the active display currency."""
-    return f"{curr_sym}{v * fx_rate:,.2f}"
+    """Format a monetary value in the active display currency."""
+    return f"{curr_sym}{v:,.2f}"
 
 st.title("🏨 Hotel Performance Report")
 
@@ -76,6 +77,7 @@ with st.sidebar:
             if st.toggle(f"Local currency ({_curr_code})", value=False):
                 curr_sym = _curr_sym_local
                 fx_rate  = load_fx_rate(_curr_code)
+                local_db = True
 
 filters = {
     "region":   selected_region,
@@ -83,6 +85,7 @@ filters = {
     "segment":  selected_segment,
     "start":    str(start_date),
     "end":      str(end_date),
+    "local":    local_db,
 }
 
 ANALYST_TEXT  = """Write your commentary here."""
@@ -233,7 +236,8 @@ with tab2:
         st.markdown(f"**YTD Growth — 2026 vs 2025 (Jan 1 – {date.today().strftime('%b %d')})**")
         with st.spinner("Loading YTD growth…"):
             ytd = load_ytd_growth(
-                tuple(selected_region), tuple(selected_country), tuple(selected_segment))
+                tuple(selected_region), tuple(selected_country), tuple(selected_segment),
+                local=local_db)
         if ytd.get("too_few"):
             st.info(TOO_FEW_MSG)
         elif ytd:
@@ -307,7 +311,8 @@ with tab2:
 
         with st.spinner("Loading OTB growth…"):
             otb_g = load_otb_growth(
-                tuple(selected_region), tuple(selected_country), tuple(selected_segment))
+                tuple(selected_region), tuple(selected_country), tuple(selected_segment),
+                local=local_db)
         if otb_g.get("too_few"):
             st.info(TOO_FEW_MSG)
         elif otb_g:
@@ -333,10 +338,12 @@ with tab3:
     if show_regions or not show_countries:
         with st.spinner("Loading regional data…"):
             df_reg_ann = load_regional_annual(
-                tuple(selected_segment), tuple(selected_region), tuple(selected_country))
+                tuple(selected_segment), tuple(selected_region), tuple(selected_country),
+                local=local_db, fx_rate=fx_rate)
             df_reg_mon = load_regional_monthly(
                 tuple(selected_segment), str(start_date), str(end_date),
-                tuple(selected_region), tuple(selected_country))
+                tuple(selected_region), tuple(selected_country),
+                local=local_db, fx_rate=fx_rate)
 
         region_color_map = {r: PALETTE[i % len(PALETTE)] for i, r in enumerate(selected_region)}
         region_color_map["Global"] = GLOBAL_COLOR
@@ -356,10 +363,12 @@ with tab3:
 
         with st.spinner("Loading country data…"):
             df_ctry_ann = load_country_annual(
-                tuple(selected_segment), tuple(selected_country))
+                tuple(selected_segment), tuple(selected_country),
+                local=local_db, fx_rate=fx_rate)
             df_ctry_mon = load_country_monthly(
                 tuple(selected_segment), str(start_date), str(end_date),
-                tuple(selected_country))
+                tuple(selected_country),
+                local=local_db, fx_rate=fx_rate)
 
         country_color_map = {c: PALETTE[i % len(PALETTE)] for i, c in enumerate(selected_country)}
         country_color_map["Global"] = GLOBAL_COLOR
@@ -379,10 +388,12 @@ with tab3:
 with tab4:
     with st.spinner("Loading hotel class data…"):
         df_hc_ann = load_hotelclass_annual(
-            tuple(selected_segment), tuple(selected_region), tuple(selected_country))
+            tuple(selected_segment), tuple(selected_region), tuple(selected_country),
+            local=local_db, fx_rate=fx_rate)
         df_hc_mon = load_hotelclass_monthly(
             tuple(selected_segment), str(start_date), str(end_date),
-            tuple(selected_region), tuple(selected_country))
+            tuple(selected_region), tuple(selected_country),
+            local=local_db, fx_rate=fx_rate)
 
     available_classes = [c for c in HOTEL_CLASS_ORDER
                          if c in df_hc_ann["hotel_class"].unique()]
@@ -790,7 +801,7 @@ with tab7:
             df_tbl["% of Total"] = (df_tbl["net_revenue_eur"] / total_all * 100).apply(
                 lambda x: f"{x:.1f}%")
             df_tbl["net_revenue_eur"] = df_tbl["net_revenue_eur"].apply(
-                lambda x: f"{curr_sym}{x * fx_rate:,.0f}")
+                lambda x: f"{curr_sym}{x:,.0f}")
             df_tbl.columns = ["Department", f"Net Revenue ({curr_sym})", "% of Total"]
             st.dataframe(df_tbl, use_container_width=True, hide_index=True)
     else:
@@ -806,15 +817,14 @@ with tab7:
         with col_sqm1:
             st.markdown(f"**Avg Revenue per m² ({curr_sym})**")
             _sqm_plot = df_sqm.sort_values("revenue_per_sqm_eur").copy()
-            _sqm_plot["_converted"] = _sqm_plot["revenue_per_sqm_eur"] * fx_rate
             fig = px.bar(_sqm_plot,
-                         x="_converted", y="category", orientation="h",
-                         labels={"category":"","_converted":f"{curr_sym} per m²"},
+                         x="revenue_per_sqm_eur", y="category", orientation="h",
+                         labels={"category":"","revenue_per_sqm_eur":f"{curr_sym} per m²"},
                          color="category",
                          color_discrete_map=dict(zip(
                              ["Rooms","Food & Beverage","Events & Meetings",
                               "Wellness & Spa","Sport & Recreation"], PALETTE)),
-                         text=_sqm_plot["_converted"].apply(lambda x: f"{curr_sym}{x:,.2f}"))
+                         text=_sqm_plot["revenue_per_sqm_eur"].apply(mc))
             fig.update_traces(textposition="outside")
             fig.update_layout(showlegend=False, yaxis={"categoryorder":"total ascending"})
             st.plotly_chart(fig, use_container_width=True)
@@ -990,21 +1000,27 @@ with tab8:
             f = filters
             kpis_ex    = load_kpis(f)
             ytd_ex     = load_ytd_growth(
-                tuple(selected_region), tuple(selected_country), tuple(selected_segment))
+                tuple(selected_region), tuple(selected_country), tuple(selected_segment),
+                local=local_db)
             otb_g_ex   = load_otb_growth(
-                tuple(selected_region), tuple(selected_country), tuple(selected_segment))
+                tuple(selected_region), tuple(selected_country), tuple(selected_segment),
+                local=local_db)
             trends_ex  = load_trends(f)
             otb_ex     = load_otb_trends(f)
             reg_ann_ex = load_regional_annual(
-                tuple(selected_segment), tuple(selected_region), tuple(selected_country))
+                tuple(selected_segment), tuple(selected_region), tuple(selected_country),
+                local=local_db, fx_rate=fx_rate)
             reg_mon_ex = load_regional_monthly(
                 tuple(selected_segment), str(start_date), str(end_date),
-                tuple(selected_region), tuple(selected_country))
+                tuple(selected_region), tuple(selected_country),
+                local=local_db, fx_rate=fx_rate)
             hc_ann_ex  = load_hotelclass_annual(
-                tuple(selected_segment), tuple(selected_region), tuple(selected_country))
+                tuple(selected_segment), tuple(selected_region), tuple(selected_country),
+                local=local_db, fx_rate=fx_rate)
             hc_mon_ex  = load_hotelclass_monthly(
                 tuple(selected_segment), str(start_date), str(end_date),
-                tuple(selected_region), tuple(selected_country))
+                tuple(selected_region), tuple(selected_country),
+                local=local_db, fx_rate=fx_rate)
             avail_classes = [c for c in HOTEL_CLASS_ORDER
                              if c in hc_ann_ex["hotel_class"].unique()]
             beh_ex   = load_behaviour_annual(

@@ -106,6 +106,12 @@ ROOM_METRICS_SQL = """\
         / NULLIF(SUM(CASE WHEN m.num_directly_occupied_accommodation_resources > 0
                     THEN m.num_available_accommodation_resources END), 0) * 100    AS occupancy"""
 
+# Same formula but using local currency revenue instead of EUR.
+ROOM_METRICS_SQL_LOCAL = ROOM_METRICS_SQL.replace(
+    "m.total_adjusted_net_accommodation_revenue_eur",
+    "m.total_adjusted_net_accommodation_revenue",
+)
+
 
 # ── DB connection ─────────────────────────────────────────────────────────────
 @st.cache_resource
@@ -232,6 +238,7 @@ def count_properties(f: dict) -> int:
 
 def load_kpis(f: dict) -> dict:
     pf = prop_filter(f)
+    _rms = ROOM_METRICS_SQL_LOCAL if f.get("local") else ROOM_METRICS_SQL
     df_res = query(f"""
         SELECT COUNT(DISTINCT r.reservation_id)  AS reservations,
                COUNT(DISTINCT r.pms_property_id) AS enterprises
@@ -241,7 +248,7 @@ def load_kpis(f: dict) -> dict:
     """)
     df_m = query(f"""
         SELECT
-            {ROOM_METRICS_SQL}
+            {_rms}
         FROM product.marts.mrt_daily_resource_and_revenue_metrics_per_property m
         JOIN product.dimensions.dim_pms_properties p ON m.pms_property_id = p.pms_property_id
         WHERE {pf}
@@ -261,7 +268,7 @@ def load_kpis(f: dict) -> dict:
 
 @st.cache_data(ttl=3600)
 def load_ytd_growth(region: tuple, country: tuple, segment: tuple,
-                    cohort_start: str = "2024-01-01") -> dict:
+                    cohort_start: str = "2024-01-01", local: bool = False) -> dict:
     extra = _region_country_clause(region, country)
     parts = [
         "p.is_deleted = FALSE", "p.subscription_state = 'Enabled'",
@@ -274,12 +281,13 @@ def load_ytd_growth(region: tuple, country: tuple, segment: tuple,
         parts.append(f"p.commercial_segment IN ({', '.join(f'{chr(39)}{s}{chr(39)}' for s in segment)})")
     pf = " AND ".join(parts)
 
+    _rms = ROOM_METRICS_SQL_LOCAL if local else ROOM_METRICS_SQL
     today = date.today()
     today_mmdd = today.strftime("%m%d")
     df = query(f"""
         SELECT YEAR(m.calendar_date_local) AS year,
                COUNT(DISTINCT m.pms_property_id) AS property_count,
-               {ROOM_METRICS_SQL}
+               {_rms}
         FROM product.marts.mrt_daily_resource_and_revenue_metrics_per_property m
         JOIN product.dimensions.dim_pms_properties p ON m.pms_property_id = p.pms_property_id
         WHERE {pf}
@@ -308,7 +316,7 @@ def load_ytd_growth(region: tuple, country: tuple, segment: tuple,
 
 @st.cache_data(ttl=3600)
 def load_otb_growth(region: tuple, country: tuple, segment: tuple,
-                    cohort_start: str = "2024-01-01") -> dict:
+                    cohort_start: str = "2024-01-01", local: bool = False) -> dict:
     extra = _region_country_clause(region, country)
     parts = [
         "p.is_deleted = FALSE", "p.subscription_state = 'Enabled'",
@@ -327,8 +335,7 @@ def load_otb_growth(region: tuple, country: tuple, segment: tuple,
     snap    = date.fromisoformat(str(snap_df["latest"].iloc[0]))
     snap_ly = date(snap.year - 1, snap.month, snap.day)
 
-    # OTB table uses the same raw columns — apply room-weighted formulas with seasonality fix
-    otb_metrics = ROOM_METRICS_SQL
+    otb_metrics = ROOM_METRICS_SQL_LOCAL if local else ROOM_METRICS_SQL
 
     df = query(f"""
         SELECT CASE WHEN m.snapshot_date_local='{snap}' THEN 'this_year'
@@ -364,11 +371,12 @@ def load_otb_growth(region: tuple, country: tuple, segment: tuple,
 
 def load_trends(f: dict) -> pd.DataFrame:
     pf = prop_filter(f)
+    _rms = ROOM_METRICS_SQL_LOCAL if f.get("local") else ROOM_METRICS_SQL
     df = query(f"""
         SELECT m.calendar_date_local AS date,
                YEAR(m.calendar_date_local) AS year,
                COUNT(DISTINCT m.pms_property_id) AS property_count,
-               {ROOM_METRICS_SQL}
+               {_rms}
         FROM product.marts.mrt_daily_resource_and_revenue_metrics_per_property m
         JOIN product.dimensions.dim_pms_properties p ON m.pms_property_id = p.pms_property_id
         WHERE {pf}
@@ -401,7 +409,7 @@ def load_otb_trends(f: dict) -> pd.DataFrame:
     snap    = date.fromisoformat(str(snap_df["latest"].iloc[0]))
     snap_ly = date(snap.year - 1, snap.month, snap.day)
 
-    otb_metrics = ROOM_METRICS_SQL
+    otb_metrics = ROOM_METRICS_SQL_LOCAL if f.get("local") else ROOM_METRICS_SQL
 
     df = query(f"""
         SELECT DATEDIFF(m.on_the_books_date_local, m.snapshot_date_local) AS days_ahead,
@@ -623,11 +631,12 @@ PNL_ORDER = ["Rooms","Food & Beverage","Events & Meetings","Wellness & Spa","Fac
 
 def load_pnl_monthly(f: dict) -> pd.DataFrame:
     pf = prop_filter(f)
+    _rev_col = "m.total_adjusted_net_value" if f.get("local") else "m.total_adjusted_net_value_eur"
     df = query(f"""
         SELECT DATE_TRUNC('MONTH', m.revenue_date_local) AS month,
                m.accounting_category_classification AS category,
                COUNT(DISTINCT m.pms_property_id) AS property_count,
-               SUM(m.total_adjusted_net_value_eur) AS net_revenue_eur
+               SUM({_rev_col}) AS net_revenue_eur
         FROM product.marts.mrt_daily_property_revenue_per_accounting_category_classification m
         JOIN product.dimensions.dim_pms_properties p ON m.pms_property_id = p.pms_property_id
         WHERE {pf}
@@ -646,10 +655,11 @@ def load_pnl_monthly(f: dict) -> pd.DataFrame:
 
 def load_pnl_mix(f: dict) -> pd.DataFrame:
     pf = prop_filter(f)
+    _rev_col = "m.total_adjusted_net_value" if f.get("local") else "m.total_adjusted_net_value_eur"
     df = query(f"""
         SELECT m.accounting_category_classification AS category,
                COUNT(DISTINCT m.pms_property_id) AS property_count,
-               SUM(m.total_adjusted_net_value_eur) AS net_revenue_eur
+               SUM({_rev_col}) AS net_revenue_eur
         FROM product.marts.mrt_daily_property_revenue_per_accounting_category_classification m
         JOIN product.dimensions.dim_pms_properties p ON m.pms_property_id = p.pms_property_id
         WHERE {pf}
@@ -670,11 +680,12 @@ def load_pnl_mix(f: dict) -> pd.DataFrame:
 
 def load_revenue_per_sqm(f: dict) -> pd.DataFrame:
     pf = prop_filter(f)
+    _rev_col = "rev.total_adjusted_net_value" if f.get("local") else "rev.total_adjusted_net_value_eur"
     df = query(f"""
         SELECT rev.accounting_category_classification AS category,
                COUNT(DISTINCT rev.pms_property_id) AS property_count,
-               SUM(rev.total_adjusted_net_value_eur) AS total_revenue_eur,
-               SUM(rev.total_adjusted_net_value_eur) / NULLIF(SUM(CASE
+               SUM({_rev_col}) AS total_revenue_eur,
+               SUM({_rev_col}) / NULLIF(SUM(CASE
                    WHEN rev.accounting_category_classification='Accommodation'
                        THEN sqm.room_area_meters_squared
                    WHEN rev.accounting_category_classification='FoodAndBeverage'
@@ -944,6 +955,9 @@ def load_channel_adr(f: dict) -> pd.DataFrame:
         s_list = ", ".join(f"'{_esc(s)}'" for s in f["segment"])
         parts.append(f"p.commercial_segment IN ({s_list})")
     pf = " AND ".join(parts)
+    _adr_rev_col = ("m.total_adjusted_net_accommodation_revenue"
+                    if f.get("local")
+                    else "m.total_adjusted_net_accommodation_revenue_eur")
 
     df = query(f"""
         SELECT YEAR(m.calendar_date_local) AS year,
@@ -960,7 +974,7 @@ def load_channel_adr(f: dict) -> pd.DataFrame:
                END AS channel,
                COUNT(DISTINCT m.pms_property_id) AS property_count,
                COUNT(*)  AS room_nights,
-               SUM(m.total_adjusted_net_accommodation_revenue_eur
+               SUM({_adr_rev_col}
                    / NULLIF(m.num_directly_occupied_accommodation_resources, 0))
                    / NULLIF(COUNT(*), 0)  AS adr_eur
         FROM product.facts.fct_reservations r
@@ -1189,7 +1203,8 @@ def load_behaviour_annual(region: tuple, country: tuple, segment: tuple) -> dict
 # ── Regional Overview ─────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=3600)
-def load_regional_annual(segment: tuple, region: tuple, country: tuple) -> pd.DataFrame:
+def load_regional_annual(segment: tuple, region: tuple, country: tuple,
+                          local: bool = False, fx_rate: float = 1.0) -> pd.DataFrame:
     seg_clause = (f"AND p.commercial_segment IN "
                   f"({', '.join(f'{chr(39)}{s}{chr(39)}' for s in segment)})"
                   if segment else "")
@@ -1197,12 +1212,13 @@ def load_regional_annual(segment: tuple, region: tuple, country: tuple) -> pd.Da
     rc = REGION_CASE
     today_mmdd = date.today().strftime("%m%d")
     go_live = _go_live_clause("2024-01-01")
+    _rms = ROOM_METRICS_SQL_LOCAL if local else ROOM_METRICS_SQL
 
     df = query(f"""
         SELECT {rc} AS region,
                YEAR(m.calendar_date_local) AS year,
                COUNT(DISTINCT m.pms_property_id) AS property_count,
-               {ROOM_METRICS_SQL}
+               {_rms}
         FROM product.marts.mrt_daily_resource_and_revenue_metrics_per_property m
         JOIN product.dimensions.dim_pms_properties p ON m.pms_property_id = p.pms_property_id
         WHERE p.is_deleted=FALSE AND p.subscription_state='Enabled'
@@ -1230,18 +1246,24 @@ def load_regional_annual(segment: tuple, region: tuple, country: tuple) -> pd.Da
     """)
     if not df.empty:
         df = df[df["property_count"] >= MIN_PROPERTIES]
+    if local and fx_rate != 1.0:
+        for col in ("adr", "revpar"):
+            if col in global_df.columns:
+                global_df[col] = global_df[col].astype(float) * fx_rate
     return pd.concat([global_df, df], ignore_index=True)
 
 
 @st.cache_data(ttl=3600)
 def load_regional_monthly(segment: tuple, start: str, end: str,
-                           region: tuple, country: tuple) -> pd.DataFrame:
+                           region: tuple, country: tuple,
+                           local: bool = False, fx_rate: float = 1.0) -> pd.DataFrame:
     seg_clause = (f"AND p.commercial_segment IN "
                   f"({', '.join(f'{chr(39)}{s}{chr(39)}' for s in segment)})"
                   if segment else "")
     extra = _region_country_clause(region, country)
     rc = REGION_CASE
     go_live = _go_live_clause(start)
+    _rms = ROOM_METRICS_SQL_LOCAL if local else ROOM_METRICS_SQL
     base = (f"p.is_deleted=FALSE AND p.subscription_state='Enabled' "
             f"AND CAST(p.pms_property_created_at AS DATE)<'{start}' "
             f"AND {go_live} "
@@ -1256,7 +1278,7 @@ def load_regional_monthly(segment: tuple, start: str, end: str,
         SELECT {rc} AS region,
                DATE_TRUNC('MONTH', m.calendar_date_local) AS month,
                COUNT(DISTINCT m.pms_property_id) AS property_count,
-               {ROOM_METRICS_SQL}
+               {_rms}
         FROM product.marts.mrt_daily_resource_and_revenue_metrics_per_property m
         JOIN product.dimensions.dim_pms_properties p ON m.pms_property_id = p.pms_property_id
         WHERE {base} GROUP BY {rc}, month ORDER BY {rc}, month
@@ -1274,18 +1296,24 @@ def load_regional_monthly(segment: tuple, start: str, end: str,
         return pd.DataFrame()
     if not df.empty:
         df = df[df["property_count"] >= MIN_PROPERTIES]
+    if local and fx_rate != 1.0:
+        for col in ("adr", "revpar"):
+            if col in global_df.columns:
+                global_df[col] = global_df[col].astype(float) * fx_rate
     combined = pd.concat([global_df, df], ignore_index=True)
     combined["month"] = pd.to_datetime(combined["month"])
     return combined.sort_values(["region", "month"])
 
 
 @st.cache_data(ttl=3600)
-def load_country_annual(segment: tuple, country: tuple) -> pd.DataFrame:
+def load_country_annual(segment: tuple, country: tuple,
+                         local: bool = False, fx_rate: float = 1.0) -> pd.DataFrame:
     seg_clause = (f"AND p.commercial_segment IN "
                   f"({', '.join(f'{chr(39)}{s}{chr(39)}' for s in segment)})"
                   if segment else "")
     today_mmdd = date.today().strftime("%m%d")
     go_live = _go_live_clause("2024-01-01")
+    _rms = ROOM_METRICS_SQL_LOCAL if local else ROOM_METRICS_SQL
 
     if country:
         c_list = ", ".join(f"'{_esc(c)}'" for c in country)
@@ -1297,7 +1325,7 @@ def load_country_annual(segment: tuple, country: tuple) -> pd.DataFrame:
         SELECT p.country_name,
                YEAR(m.calendar_date_local) AS year,
                COUNT(DISTINCT m.pms_property_id) AS property_count,
-               {ROOM_METRICS_SQL}
+               {_rms}
         FROM product.marts.mrt_daily_resource_and_revenue_metrics_per_property m
         JOIN product.dimensions.dim_pms_properties p ON m.pms_property_id = p.pms_property_id
         WHERE p.is_deleted=FALSE AND p.subscription_state='Enabled'
@@ -1325,16 +1353,22 @@ def load_country_annual(segment: tuple, country: tuple) -> pd.DataFrame:
     """)
     if not df.empty:
         df = df[df["property_count"] >= MIN_PROPERTIES]
+    if local and fx_rate != 1.0:
+        for col in ("adr", "revpar"):
+            if col in global_df.columns:
+                global_df[col] = global_df[col].astype(float) * fx_rate
     return pd.concat([global_df, df], ignore_index=True)
 
 
 @st.cache_data(ttl=3600)
 def load_country_monthly(segment: tuple, start: str, end: str,
-                         country: tuple) -> pd.DataFrame:
+                         country: tuple,
+                         local: bool = False, fx_rate: float = 1.0) -> pd.DataFrame:
     seg_clause = (f"AND p.commercial_segment IN "
                   f"({', '.join(f'{chr(39)}{s}{chr(39)}' for s in segment)})"
                   if segment else "")
     go_live = _go_live_clause(start)
+    _rms = ROOM_METRICS_SQL_LOCAL if local else ROOM_METRICS_SQL
 
     if country:
         c_list = ", ".join(f"'{_esc(c)}'" for c in country)
@@ -1352,7 +1386,7 @@ def load_country_monthly(segment: tuple, start: str, end: str,
         SELECT p.country_name,
                DATE_TRUNC('MONTH', m.calendar_date_local) AS month,
                COUNT(DISTINCT m.pms_property_id) AS property_count,
-               {ROOM_METRICS_SQL}
+               {_rms}
         FROM product.marts.mrt_daily_resource_and_revenue_metrics_per_property m
         JOIN product.dimensions.dim_pms_properties p ON m.pms_property_id = p.pms_property_id
         WHERE {base} {country_clause}
@@ -1372,6 +1406,10 @@ def load_country_monthly(segment: tuple, start: str, end: str,
         return pd.DataFrame()
     if not df.empty:
         df = df[df["property_count"] >= MIN_PROPERTIES]
+    if local and fx_rate != 1.0:
+        for col in ("adr", "revpar"):
+            if col in global_df.columns:
+                global_df[col] = global_df[col].astype(float) * fx_rate
     combined = pd.concat([global_df, df], ignore_index=True)
     combined["month"] = pd.to_datetime(combined["month"])
     return combined.sort_values(["country_name", "month"])
@@ -1383,19 +1421,21 @@ HOTEL_CLASS_ORDER = ["Luxury","Upscale","Midscale","Economy"]
 
 @st.cache_data(ttl=3600)
 def load_hotelclass_annual(segment: tuple, region: tuple = (),
-                            country: tuple = ()) -> pd.DataFrame:
+                            country: tuple = (),
+                            local: bool = False, fx_rate: float = 1.0) -> pd.DataFrame:
     seg_clause = (f"AND p.commercial_segment IN "
                   f"({', '.join(f'{chr(39)}{s}{chr(39)}' for s in segment)})"
                   if segment else "")
     extra = _region_country_clause(region, country)
     today_mmdd = date.today().strftime("%m%d")
     go_live = _go_live_clause("2024-01-01")
+    _rms = ROOM_METRICS_SQL_LOCAL if local else ROOM_METRICS_SQL
 
     df = query(f"""
         SELECT p.{HOTEL_CLASS_COL} AS hotel_class,
                YEAR(m.calendar_date_local) AS year,
                COUNT(DISTINCT m.pms_property_id) AS property_count,
-               {ROOM_METRICS_SQL}
+               {_rms}
         FROM product.marts.mrt_daily_resource_and_revenue_metrics_per_property m
         JOIN product.dimensions.dim_pms_properties p ON m.pms_property_id = p.pms_property_id
         WHERE p.is_deleted=FALSE AND p.subscription_state='Enabled'
@@ -1424,17 +1464,23 @@ def load_hotelclass_annual(segment: tuple, region: tuple = (),
     """)
     if not df.empty:
         df = df[df["property_count"] >= MIN_PROPERTIES]
+    if local and fx_rate != 1.0:
+        for col in ("adr", "revpar"):
+            if col in global_df.columns:
+                global_df[col] = global_df[col].astype(float) * fx_rate
     return pd.concat([global_df, df], ignore_index=True)
 
 
 @st.cache_data(ttl=3600)
 def load_hotelclass_monthly(segment: tuple, start: str, end: str,
-                             region: tuple = (), country: tuple = ()) -> pd.DataFrame:
+                             region: tuple = (), country: tuple = (),
+                             local: bool = False, fx_rate: float = 1.0) -> pd.DataFrame:
     seg_clause = (f"AND p.commercial_segment IN "
                   f"({', '.join(f'{chr(39)}{s}{chr(39)}' for s in segment)})"
                   if segment else "")
     extra = _region_country_clause(region, country)
     go_live = _go_live_clause(start)
+    _rms = ROOM_METRICS_SQL_LOCAL if local else ROOM_METRICS_SQL
     base = (f"p.is_deleted=FALSE AND p.subscription_state='Enabled' "
             f"AND CAST(p.pms_property_created_at AS DATE)<'{start}' "
             f"AND {go_live} "
@@ -1449,7 +1495,7 @@ def load_hotelclass_monthly(segment: tuple, start: str, end: str,
         SELECT p.{HOTEL_CLASS_COL} AS hotel_class,
                DATE_TRUNC('MONTH', m.calendar_date_local) AS month,
                COUNT(DISTINCT m.pms_property_id) AS property_count,
-               {ROOM_METRICS_SQL}
+               {_rms}
         FROM product.marts.mrt_daily_resource_and_revenue_metrics_per_property m
         JOIN product.dimensions.dim_pms_properties p ON m.pms_property_id = p.pms_property_id
         WHERE {base} GROUP BY hotel_class, month ORDER BY hotel_class, month
@@ -1467,6 +1513,10 @@ def load_hotelclass_monthly(segment: tuple, start: str, end: str,
         return pd.DataFrame()
     if not df.empty:
         df = df[df["property_count"] >= MIN_PROPERTIES]
+    if local and fx_rate != 1.0:
+        for col in ("adr", "revpar"):
+            if col in global_df.columns:
+                global_df[col] = global_df[col].astype(float) * fx_rate
     combined = pd.concat([global_df, df], ignore_index=True)
     combined["month"] = pd.to_datetime(combined["month"])
     return combined.sort_values(["hotel_class", "month"])
