@@ -1,10 +1,7 @@
 name: Weekly JSON Export
 
 on:
-  schedule:
-    # Every Monday at 06:00 UTC
-    - cron: "0 6 * * 1"
-  workflow_dispatch:  # allow manual runs from the GitHub Actions tab
+  workflow_dispatch:  # manual trigger only — export is now handled by Claude Code scheduled task via Databricks MCP
 
 jobs:
   export:
