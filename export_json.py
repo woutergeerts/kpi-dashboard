@@ -95,9 +95,9 @@ def main():
     # ── Tab 3 — Regional Overview ─────────────────────────────────────────────
     if EXPORT_BREAKDOWNS:
         save("regional_annual",  q.load_regional_annual((), (), ()))
-        save("regional_monthly", q.load_regional_monthly((), START_DATE, END_DATE))
+        save("regional_monthly", q.load_regional_monthly((), START_DATE, END_DATE, (), ()))
         save("country_annual",   q.load_country_annual((), ()))
-        save("country_monthly",  q.load_country_monthly((), START_DATE, END_DATE))
+        save("country_monthly",  q.load_country_monthly((), START_DATE, END_DATE, ()))
 
     # ── Tab 4 — Hotel Class ───────────────────────────────────────────────────
     if EXPORT_BREAKDOWNS:
